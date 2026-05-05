@@ -41,25 +41,29 @@ async function writeStore(storePath: string, store: DedupeStore): Promise<void> 
 /**
  * Check dedup state and optionally update the store.
  *
+ * The store key is scoped per tenant: `{tenantId}:{videoId}`.
+ *
  * @returns true  → upload should be skipped (identical hash already stored)
  *          false → upload should proceed (new or changed hash)
  */
 export async function checkAndUpdateDedupe(
   videoId: string,
   hash: string,
-  storePath: string = DEFAULT_STORE_PATH
+  storePath: string = DEFAULT_STORE_PATH,
+  tenantId?: string
 ): Promise<boolean> {
   const store = await readStore(storePath);
-  const existing = store[videoId];
+  const key = tenantId ? `${tenantId}:${videoId}` : videoId;
+  const existing = store[key];
 
   if (existing && existing.hash === hash) {
-    logger.info("Dedupe: thumbnail unchanged, skipping upload", { videoId });
+    logger.info("Dedupe: thumbnail unchanged, skipping upload", { videoId, tenantId });
     return true; // skip
   }
 
-  store[videoId] = { hash, updatedAt: new Date().toISOString() };
+  store[key] = { hash, updatedAt: new Date().toISOString() };
   await writeStore(storePath, store);
-  logger.info("Dedupe: hash updated", { videoId, hash: hash.slice(0, 12) });
+  logger.info("Dedupe: hash updated", { videoId, tenantId, hash: hash.slice(0, 12) });
   return false; // proceed
 }
 

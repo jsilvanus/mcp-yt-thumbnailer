@@ -1,22 +1,31 @@
 /**
  * Google OAuth2 authentication for YouTube API.
- * - First run: prints auth URL, reads code from stdin, stores tokens.
- * - Subsequent runs: loads tokens, auto-refreshes if needed.
+ * Multi-tenant: each tenant has its own token file under TOKENS_DIR.
+ * The OAuth2 web redirect flow is handled by the Express server.
  */
 import fs from "fs";
 import path from "path";
-import readline from "readline";
 import { google, Auth } from "googleapis";
 import { logger } from "../utils/logger.js";
 
 const SCOPES = ["https://www.googleapis.com/auth/youtube.upload"];
 
-const TOKENS_PATH = process.env.TOKENS_PATH ?? path.resolve(".tokens.json");
+function getTokensDir(): string {
+  return path.resolve(process.env.TOKENS_DIR ?? ".tokens");
+}
+
+export function getTokensPath(tenantId: string): string {
+  return path.join(getTokensDir(), `${tenantId}.tokens.json`);
+}
+
+function getRedirectUri(): string {
+  const base = process.env.SERVER_BASE_URL ?? "http://localhost:3000";
+  return `${base}/auth/callback`;
+}
 
 function createOAuth2Client(): Auth.OAuth2Client {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? "urn:ietf:wg:oauth:2.0:oob";
 
   if (!clientId || !clientSecret) {
     throw new Error(
@@ -24,12 +33,15 @@ function createOAuth2Client(): Auth.OAuth2Client {
     );
   }
 
-  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+  return new google.auth.OAuth2(clientId, clientSecret, getRedirectUri());
 }
 
-async function loadTokens(client: Auth.OAuth2Client): Promise<boolean> {
+async function loadTokens(
+  client: Auth.OAuth2Client,
+  tenantId: string
+): Promise<boolean> {
   try {
-    const raw = await fs.promises.readFile(TOKENS_PATH, "utf-8");
+    const raw = await fs.promises.readFile(getTokensPath(tenantId), "utf-8");
     const tokens = JSON.parse(raw) as Auth.Credentials;
     client.setCredentials(tokens);
     return true;
@@ -38,64 +50,84 @@ async function loadTokens(client: Auth.OAuth2Client): Promise<boolean> {
   }
 }
 
-async function saveTokens(client: Auth.OAuth2Client): Promise<void> {
-  const tokens = client.credentials;
-  const tmpPath = `${TOKENS_PATH}.tmp`;
-  await fs.promises.writeFile(tmpPath, JSON.stringify(tokens, null, 2), "utf-8");
-  await fs.promises.rename(tmpPath, TOKENS_PATH);
-  logger.info("Tokens saved");
+async function saveTokens(
+  client: Auth.OAuth2Client,
+  tenantId: string
+): Promise<void> {
+  const tokensPath = getTokensPath(tenantId);
+  await fs.promises.mkdir(path.dirname(tokensPath), { recursive: true });
+  const tmpPath = `${tokensPath}.tmp`;
+  await fs.promises.writeFile(tmpPath, JSON.stringify(client.credentials, null, 2), "utf-8");
+  await fs.promises.rename(tmpPath, tokensPath);
+  logger.info("Tokens saved", { tenantId });
 }
 
-async function promptForCode(authUrl: string): Promise<string> {
-  console.log("\n=== YouTube OAuth2 Setup ===");
-  console.log("Open this URL in your browser and authorize the application:");
-  console.log("\n" + authUrl + "\n");
+/**
+ * Returns true if the tenant has stored tokens (may or may not be valid).
+ */
+export async function hasTokens(tenantId: string): Promise<boolean> {
+  try {
+    await fs.promises.access(getTokensPath(tenantId));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question("Enter the authorization code: ", (code) => {
-      rl.close();
-      resolve(code.trim());
-    });
+/**
+ * Generates the Google OAuth2 authorization URL for a given tenant.
+ * The tenantId is embedded in the state parameter so the callback
+ * can associate the code with the correct tenant.
+ */
+export function generateAuthUrl(tenantId: string): string {
+  const client = createOAuth2Client();
+  return client.generateAuthUrl({
+    access_type: "offline",
+    scope: SCOPES,
+    state: tenantId,
+    prompt: "consent",
   });
 }
 
 /**
- * Returns an authenticated OAuth2 client.
- * If no tokens are stored, initiates the auth flow.
+ * Exchanges an OAuth2 authorization code for tokens and persists them
+ * under the tenant's token file.
  */
-export async function getAuthClient(): Promise<Auth.OAuth2Client> {
+export async function exchangeCodeForTokens(
+  tenantId: string,
+  code: string
+): Promise<void> {
   const client = createOAuth2Client();
-
-  const loaded = await loadTokens(client);
-  if (loaded) {
-    // Auto-refresh if access token is expired
-    const expiry = client.credentials.expiry_date;
-    if (expiry && Date.now() > expiry - 60_000) {
-      logger.info("Access token expired, refreshing");
-      const { credentials } = await client.refreshAccessToken();
-      client.setCredentials(credentials);
-      await saveTokens(client);
-    }
-    logger.info("OAuth2: loaded existing tokens");
-    return client;
-  }
-
-  // First-time auth flow
-  const authUrl = client.generateAuthUrl({
-    access_type: "offline",
-    scope: SCOPES,
-  });
-
-  const code = await promptForCode(authUrl);
   const { tokens } = await client.getToken(code);
   client.setCredentials(tokens);
-  await saveTokens(client);
-  logger.info("OAuth2: tokens obtained and saved");
+  await saveTokens(client, tenantId);
+  logger.info("OAuth2: tokens obtained and saved", { tenantId });
+}
 
+/**
+ * Returns an authenticated OAuth2 client for the given tenant.
+ * Throws if the tenant has not completed the OAuth2 flow yet.
+ */
+export async function getAuthClient(tenantId: string): Promise<Auth.OAuth2Client> {
+  const client = createOAuth2Client();
+
+  const loaded = await loadTokens(client, tenantId);
+  if (!loaded) {
+    throw new Error(
+      `Tenant "${tenantId}" is not authenticated. ` +
+        "Please complete the OAuth2 flow by visiting /auth/start."
+    );
+  }
+
+  // Auto-refresh if access token is expired
+  const expiry = client.credentials.expiry_date;
+  if (expiry && Date.now() > expiry - 60_000) {
+    logger.info("Access token expired, refreshing", { tenantId });
+    const { credentials } = await client.refreshAccessToken();
+    client.setCredentials(credentials);
+    await saveTokens(client, tenantId);
+  }
+
+  logger.info("OAuth2: loaded existing tokens", { tenantId });
   return client;
 }

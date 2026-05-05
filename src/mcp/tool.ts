@@ -10,6 +10,7 @@ import { uploadThumbnail } from "../youtube/thumbnails.js";
 import { logger } from "../utils/logger.js";
 
 export const SetYoutubeThumbnailInput = z.object({
+  tenantId: z.string().min(1, "tenantId is required"),
   videoId: z.string().min(1, "videoId is required"),
   imagePath: z.string().optional(),
   imageUrl: z.string().optional(),
@@ -36,7 +37,7 @@ export async function setYoutubeThumbnail(
     };
   }
 
-  const { videoId, imagePath, imageUrl } = parsed.data;
+  const { tenantId, videoId, imagePath, imageUrl } = parsed.data;
 
   if (!imagePath && !imageUrl) {
     return {
@@ -53,6 +54,7 @@ export async function setYoutubeThumbnail(
   }
 
   logger.info("set_youtube_thumbnail called", {
+    tenantId,
     videoId,
     inputType: imagePath ? "file" : "url",
   });
@@ -69,28 +71,28 @@ export async function setYoutubeThumbnail(
 
     // Step 3: Check dedupe store
     const storePath = resolveStorePath();
-    const skip = await checkAndUpdateDedupe(videoId, hash, storePath);
+    const skip = await checkAndUpdateDedupe(videoId, hash, storePath, tenantId);
 
     if (skip) {
       return {
         success: true,
         message: "Thumbnail unchanged, skipped upload",
-        details: { videoId, hash },
+        details: { tenantId, videoId, hash },
       };
     }
 
     // Step 4: Authenticate + upload
-    const authClient = await getAuthClient();
+    const authClient = await getAuthClient(tenantId);
     await uploadThumbnail(authClient, videoId, tempPath);
 
     return {
       success: true,
       message: "Thumbnail uploaded successfully",
-      details: { videoId, hash },
+      details: { tenantId, videoId, hash },
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error("set_youtube_thumbnail failed", { videoId, error: message });
+    logger.error("set_youtube_thumbnail failed", { tenantId, videoId, error: message });
     return {
       success: false,
       message: "Failed to set thumbnail",
