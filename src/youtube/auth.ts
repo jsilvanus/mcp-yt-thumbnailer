@@ -14,7 +14,21 @@ function getTokensDir(): string {
   return path.resolve(process.env.TOKENS_DIR ?? ".tokens");
 }
 
+/** UUID v4 format — the only shape we accept as a tenantId. */
+const TENANT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Validates that a tenantId is a UUID v4 string.
+ * Throws if the value is not a valid UUID to prevent path-traversal attacks.
+ */
+export function validateTenantId(tenantId: string): void {
+  if (!TENANT_ID_RE.test(tenantId)) {
+    throw new Error(`Invalid tenantId: must be a UUID v4 string.`);
+  }
+}
+
 export function getTokensPath(tenantId: string): string {
+  validateTenantId(tenantId);
   return path.join(getTokensDir(), `${tenantId}.tokens.json`);
 }
 
@@ -113,9 +127,10 @@ export async function getAuthClient(tenantId: string): Promise<Auth.OAuth2Client
 
   const loaded = await loadTokens(client, tenantId);
   if (!loaded) {
+    const base = process.env.SERVER_BASE_URL ?? "http://localhost:3000";
     throw new Error(
       `Tenant "${tenantId}" is not authenticated. ` +
-        "Please complete the OAuth2 flow by visiting /auth/start."
+        `Please complete the OAuth2 flow by visiting ${base}/auth/start.`
     );
   }
 

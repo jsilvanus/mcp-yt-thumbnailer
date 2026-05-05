@@ -3,6 +3,7 @@ dist/
 dist-test/
 .env
 .tokens.json
+.tokens/
 dedupe-store.json
 *.lock
 coverage/

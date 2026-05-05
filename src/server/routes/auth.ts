@@ -7,10 +7,21 @@
  */
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
-import { generateAuthUrl, exchangeCodeForTokens, hasTokens } from "../../youtube/auth.js";
+import rateLimit from "express-rate-limit";
+import { generateAuthUrl, exchangeCodeForTokens, hasTokens, validateTenantId } from "../../youtube/auth.js";
 import { logger } from "../../utils/logger.js";
 
 export const authRouter = Router();
+
+/** Escape special HTML characters to prevent XSS. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
+}
 
 /**
  * In-memory set of tenant IDs whose OAuth flows are currently in progress.
@@ -19,7 +30,16 @@ export const authRouter = Router();
 const pendingTenants = new Set<string>();
 const PENDING_TTL_MS = 10 * 60 * 1000;
 
-authRouter.get("/start", (_req: Request, res: Response) => {
+/** Rate-limit /auth/start to prevent abuse (10 requests per minute per IP). */
+const startLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: "Too many auth requests, please try again later.",
+});
+
+authRouter.get("/start", startLimiter, (_req: Request, res: Response) => {
   const tenantId = crypto.randomUUID();
   pendingTenants.add(tenantId);
   setTimeout(() => pendingTenants.delete(tenantId), PENDING_TTL_MS);
@@ -38,6 +58,13 @@ authRouter.get("/callback", async (req: Request, res: Response) => {
     return;
   }
 
+  try {
+    validateTenantId(tenantId);
+  } catch {
+    res.status(400).send("Invalid state parameter.");
+    return;
+  }
+
   if (!pendingTenants.has(tenantId)) {
     res.status(400).send("Invalid or expired auth session. Please visit /auth/start again.");
     return;
@@ -50,12 +77,13 @@ authRouter.get("/callback", async (req: Request, res: Response) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error("OAuth2: token exchange failed", { tenantId, error: message });
-    res.status(500).send(`Authentication failed: ${message}`);
+    res.status(500).send(`Authentication failed. Please try again.`);
     return;
   }
 
   logger.info("OAuth2: auth flow completed", { tenantId });
 
+  const safeTenantId = escapeHtml(tenantId);
   res.send(`
 <!DOCTYPE html>
 <html lang="en">
@@ -69,11 +97,11 @@ authRouter.get("/callback", async (req: Request, res: Response) => {
   </style>
 </head>
 <body>
-  <h1>✅ Authentication Successful</h1>
+  <h1>&#x2705; Authentication Successful</h1>
   <p>Your YouTube account has been linked. Use the Tenant ID below when calling the MCP tool:</p>
   <div class="box">
     <strong>Tenant ID:</strong><br>
-    <code>${tenantId}</code>
+    <code>${safeTenantId}</code>
   </div>
   <p>Pass this value as the <strong>tenantId</strong> parameter in every <code>set_youtube_thumbnail</code> call.</p>
 </body>
@@ -86,6 +114,13 @@ authRouter.get("/status", async (req: Request, res: Response) => {
 
   if (typeof tenantId !== "string" || !tenantId) {
     res.status(400).json({ error: "tenantId query parameter is required." });
+    return;
+  }
+
+  try {
+    validateTenantId(tenantId);
+  } catch {
+    res.status(400).json({ error: "Invalid tenantId: must be a UUID v4 string." });
     return;
   }
 
