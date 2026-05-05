@@ -1,5 +1,5 @@
 /**
- * Deduplification module.
+ * Deduplication module.
  * Stores video→{hash, updatedAt} in a JSON file with advisory locking.
  */
 import fs from "fs";
