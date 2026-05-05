@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-test/
+.env
+.tokens.json
+dedupe-store.json
+*.lock
+coverage/
+*.log
