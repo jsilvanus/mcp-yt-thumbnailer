@@ -61,6 +61,36 @@ server {
     include             /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
 
+    # ── Proxy: MCP HTTP Streaming endpoint ───────────────────────────────────
+    # Handles both:
+    #   POST /mcp  – JSON-RPC request/response (may return SSE stream)
+    #   GET  /mcp  – Long-lived SSE subscription for server-initiated events
+    #   DELETE /mcp – Session teardown
+    #
+    # IMPORTANT: proxy_buffering MUST be off for SSE to work correctly.
+    # X-Accel-Buffering overrides any parent http{} context setting.
+    location /mcp {
+        proxy_pass         http://127.0.0.1:${APP_PORT}/mcp;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        # Clear the Connection header so hop-by-hop headers (e.g. keep-alive)
+        # are not forwarded to the upstream; this keeps persistent TCP connections
+        # open between nginx and the upstream for long-lived SSE streams.
+        proxy_set_header   Connection        '';
+
+        # Disable buffering so SSE events are flushed immediately.
+        proxy_buffering    off;
+        proxy_cache        off;
+        add_header         X-Accel-Buffering no;
+
+        # Allow long-lived SSE connections (5 minutes idle timeout).
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
     # ── Proxy: OAuth2 redirect server ────────────────────────────────────────
     # The mcp-yt-thumbnailer container exposes the Express OAuth2 callback
     # server on localhost:${APP_PORT}.  Only the /auth/ path is proxied; all
