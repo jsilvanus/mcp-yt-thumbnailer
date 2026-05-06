@@ -7,6 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { setYoutubeThumbnail } from "./mcp/tool.js";
+import { startYoutubeAuth, checkYoutubeAuthStatus } from "./mcp/authTool.js";
 import { startExpressServer } from "./server/express.js";
 import { logger } from "./utils/logger.js";
 
@@ -20,6 +21,56 @@ async function main() {
     name: "mcp-yt-thumbnailer",
     version: "1.0.0",
   });
+
+  server.tool(
+    "start_youtube_auth",
+    "Start the YouTube OAuth2 authentication flow. Returns an authorization URL to open in a browser and a tenantId to use in subsequent tool calls.",
+    {},
+    async () => {
+      const result = await startYoutubeAuth();
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "check_youtube_auth_status",
+    "Check whether a tenant has completed the YouTube OAuth2 authentication flow.",
+    {
+      tenantId: z
+        .string()
+        .describe("The tenantId returned by start_youtube_auth"),
+    },
+    async (args) => {
+      try {
+        const result = await checkYoutubeAuthStatus(args.tenantId);
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ success: false, message }, null, 2),
+            },
+          ],
+        };
+      }
+    }
+  );
 
   server.tool(
     "set_youtube_thumbnail",

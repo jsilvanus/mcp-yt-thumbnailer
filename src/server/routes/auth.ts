@@ -9,6 +9,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import { generateAuthUrl, exchangeCodeForTokens, hasTokens, validateTenantId } from "../../youtube/auth.js";
+import { addPendingTenant, hasPendingTenant, removePendingTenant } from "../../youtube/pendingAuth.js";
 import { logger } from "../../utils/logger.js";
 
 export const authRouter = Router();
@@ -23,13 +24,6 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#x27;");
 }
 
-/**
- * In-memory set of tenant IDs whose OAuth flows are currently in progress.
- * Entries are removed after the callback is received or after a 10-minute TTL.
- */
-const pendingTenants = new Set<string>();
-const PENDING_TTL_MS = 10 * 60 * 1000;
-
 /** Rate-limit /auth/start to prevent abuse (10 requests per minute per IP). */
 const startLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -41,8 +35,7 @@ const startLimiter = rateLimit({
 
 authRouter.get("/start", startLimiter, (_req: Request, res: Response) => {
   const tenantId = crypto.randomUUID();
-  pendingTenants.add(tenantId);
-  setTimeout(() => pendingTenants.delete(tenantId), PENDING_TTL_MS);
+  addPendingTenant(tenantId);
 
   const authUrl = generateAuthUrl(tenantId);
   logger.info("OAuth2: auth flow started", { tenantId });
@@ -65,12 +58,12 @@ authRouter.get("/callback", async (req: Request, res: Response) => {
     return;
   }
 
-  if (!pendingTenants.has(tenantId)) {
+  if (!hasPendingTenant(tenantId)) {
     res.status(400).send("Invalid or expired auth session. Please visit /auth/start again.");
     return;
   }
 
-  pendingTenants.delete(tenantId);
+  removePendingTenant(tenantId);
 
   try {
     await exchangeCodeForTokens(tenantId, code);
