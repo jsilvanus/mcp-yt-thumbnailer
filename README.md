@@ -2,18 +2,23 @@
 
 A production-ready **MCP (Model Context Protocol) server** that lets ChatGPT (or any MCP client) set YouTube video thumbnails from either a local file or an image URL.
 
+Supports **multiple tenants**: each user authenticates independently via a web OAuth2 flow and receives a personal `tenantId` that is passed with every tool call.
+
 ---
 
 ## 1. Overview
 
 `mcp-yt-thumbnailer` exposes a single MCP tool, `set_youtube_thumbnail`, which:
 
+- Accepts a **tenantId** (identifying the authenticated user)
 - Accepts a **local file path** or an **image URL**
 - Resizes + converts the image to a YouTube-compatible JPEG (1280×720, ≤ 2 MB)
-- **Skips re-uploads** if the thumbnail hasn't changed (SHA-256 deduplication)
+- **Skips re-uploads** if the thumbnail hasn't changed (SHA-256 deduplication, scoped per tenant)
 - Authenticates via **Google OAuth2** and auto-refreshes tokens
 - Cleans up all temporary files in a `try/finally` block
 - Protects against **SSRF** when downloading remote images
+
+Alongside the MCP server, an **Express HTTP server** runs on a configurable port to handle the Google OAuth2 redirect flow.
 
 ---
 
@@ -38,13 +43,14 @@ Copy `.env.example` to `.env` and fill in your Google credentials:
 cp .env.example .env
 ```
 
-| Variable              | Required | Description                                 |
-|-----------------------|----------|---------------------------------------------|
-| `GOOGLE_CLIENT_ID`    | ✅        | OAuth2 client ID from Google Cloud Console  |
-| `GOOGLE_CLIENT_SECRET`| ✅        | OAuth2 client secret                        |
-| `GOOGLE_REDIRECT_URI` | optional | Defaults to `urn:ietf:wg:oauth:2.0:oob`    |
-| `TOKENS_PATH`         | optional | Path to store OAuth2 tokens (default: `.tokens.json`) |
-| `DEDUPE_STORE_PATH`   | optional | Path to dedup metadata store (default: `dedupe-store.json`) |
+| Variable              | Required | Description                                                    |
+|-----------------------|----------|----------------------------------------------------------------|
+| `GOOGLE_CLIENT_ID`    | ✅        | OAuth2 client ID from Google Cloud Console                     |
+| `GOOGLE_CLIENT_SECRET`| ✅        | OAuth2 client secret                                           |
+| `SERVER_BASE_URL`     | optional | Public base URL of this server (default: `http://localhost:3000`). Used to build the OAuth2 redirect URI. |
+| `PORT`                | optional | HTTP port for the OAuth2 redirect server (default: `3000`)     |
+| `TOKENS_DIR`          | optional | Directory where per-tenant token files are stored (default: `.tokens`) |
+| `DEDUPE_STORE_PATH`   | optional | Path to dedup metadata store (default: `dedupe-store.json`)    |
 
 ---
 
@@ -54,13 +60,55 @@ cp .env.example .env
 2. Create a new project (or select an existing one)
 3. Enable the **YouTube Data API v3**: *APIs & Services → Enable APIs → search "YouTube Data API v3"*
 4. Go to *APIs & Services → Credentials → Create Credentials → OAuth client ID*
-5. Choose **Desktop app** as the application type
-6. Note your **Client ID** and **Client Secret** — add them to `.env`
-7. Set `GOOGLE_REDIRECT_URI=urn:ietf:wg:oauth:2.0:oob` for CLI-based auth
+5. Choose **Web application** as the application type
+6. Add `{SERVER_BASE_URL}/auth/callback` as an **Authorized redirect URI**  
+   (e.g. `http://localhost:3000/auth/callback` for local development)
+7. Note your **Client ID** and **Client Secret** — add them to `.env`
 
 ---
 
-## 4. Running Locally
+## 4. Multi-Tenant Authentication Flow
+
+Each user must authenticate once before using the tool. The server manages a separate token file per tenant.
+
+### Step 1 – Start the auth flow
+
+Open the following URL in a browser:
+
+```
+http://localhost:3000/auth/start
+```
+
+The server generates a unique `tenantId`, stores a pending session, and immediately redirects to the Google consent screen.
+
+### Step 2 – Authorize
+
+Approve the YouTube permissions. Google redirects back to `/auth/callback`.
+
+### Step 3 – Note the Tenant ID
+
+On the callback success page you will see a **Tenant ID**, for example:
+
+```
+550e8400-e29b-41d4-a716-446655440000
+```
+
+Save this value — it is what the agent must pass in every `set_youtube_thumbnail` call.
+
+### Step 4 – Check authentication status (optional)
+
+```
+GET /auth/status?tenantId=550e8400-e29b-41d4-a716-446655440000
+```
+
+Response:
+```json
+{ "tenantId": "550e8400-e29b-41d4-a716-446655440000", "authenticated": true }
+```
+
+---
+
+## 5. Running Locally
 
 ### Development mode
 
@@ -68,39 +116,20 @@ cp .env.example .env
 npm run dev
 ```
 
-### First-time auth flow
-
-On first run the server will print an authorization URL:
-
-```
-=== YouTube OAuth2 Setup ===
-Open this URL in your browser and authorize the application:
-
-https://accounts.google.com/o/oauth2/auth?...
-
-Enter the authorization code:
-```
-
-1. Open the URL in your browser
-2. Authorize the app
-3. Copy the code shown and paste it into the terminal
-4. Tokens are saved to `.tokens.json` — subsequent runs load them automatically
-
-### Subsequent runs
-
-Tokens are loaded from `.tokens.json` and auto-refreshed when expired. No manual intervention needed.
+Both the MCP stdio server and the OAuth HTTP server start together.
 
 ---
 
-## 5. MCP Usage
+## 6. MCP Usage
 
 ### Tool: `set_youtube_thumbnail`
 
-| Parameter   | Type   | Required | Description                       |
-|-------------|--------|----------|-----------------------------------|
-| `videoId`   | string | ✅        | YouTube video ID                  |
-| `imagePath` | string | one of   | Absolute local file path          |
-| `imageUrl`  | string | one of   | HTTP/HTTPS URL to an image        |
+| Parameter   | Type   | Required | Description                                          |
+|-------------|--------|----------|------------------------------------------------------|
+| `tenantId`  | string | ✅        | Tenant ID obtained from `/auth/start`                |
+| `videoId`   | string | ✅        | YouTube video ID                                     |
+| `imagePath` | string | one of   | Absolute local file path                             |
+| `imageUrl`  | string | one of   | HTTP/HTTPS URL to an image                           |
 
 Exactly **one** of `imagePath` or `imageUrl` must be provided.
 
@@ -111,6 +140,7 @@ Exactly **one** of `imagePath` or `imageUrl` must be provided.
 {
   "tool": "set_youtube_thumbnail",
   "arguments": {
+    "tenantId": "550e8400-e29b-41d4-a716-446655440000",
     "videoId": "dQw4w9WgXcQ",
     "imagePath": "/home/user/thumbnails/my-thumb.png"
   }
@@ -121,7 +151,7 @@ Response:
 {
   "success": true,
   "message": "Thumbnail uploaded successfully",
-  "details": { "videoId": "dQw4w9WgXcQ", "hash": "a1b2c3..." }
+  "details": { "tenantId": "550e8400-...", "videoId": "dQw4w9WgXcQ", "hash": "a1b2c3..." }
 }
 ```
 
@@ -130,24 +160,25 @@ Response:
 {
   "tool": "set_youtube_thumbnail",
   "arguments": {
+    "tenantId": "550e8400-e29b-41d4-a716-446655440000",
     "videoId": "dQw4w9WgXcQ",
     "imageUrl": "https://example.com/thumbnail.jpg"
   }
 }
 ```
 
-**Skipped upload (dedup case – same image sent twice):**
+**Tenant not authenticated:**
 ```json
 {
-  "success": true,
-  "message": "Thumbnail unchanged, skipped upload",
-  "details": { "videoId": "dQw4w9WgXcQ", "hash": "a1b2c3..." }
+  "success": false,
+  "message": "Failed to set thumbnail",
+  "details": "Tenant \"550e8400-...\" is not authenticated. Please complete the OAuth2 flow by visiting /auth/start."
 }
 ```
 
 ---
 
-## 6. CI/CD
+## 7. CI/CD
 
 ### CI workflow (`.github/workflows/ci.yml`)
 
@@ -172,7 +203,7 @@ git push origin v1.0.0
 
 ---
 
-## 7. Deployment
+## 8. Deployment
 
 ### Required GitHub Secrets
 
@@ -183,7 +214,7 @@ git push origin v1.0.0
 | `SSH_PRIVATE_KEY`     | Private key for SSH authentication       |
 | `GOOGLE_CLIENT_ID`    | Google OAuth2 client ID                  |
 | `GOOGLE_CLIENT_SECRET`| Google OAuth2 client secret              |
-| `GOOGLE_REDIRECT_URI` | OAuth2 redirect URI                      |
+| `SERVER_BASE_URL`     | Public base URL (e.g. `https://your-server.example.com`) |
 
 ### VM Setup
 
@@ -192,36 +223,33 @@ git push origin v1.0.0
 curl -fsSL https://get.docker.com | sh
 
 # Create data directory for persistent volumes
-mkdir -p /srv/mcp-yt-thumbnailer/data
+mkdir -p /srv/mcp-yt-thumbnailer/data/tokens
 ```
 
 ### Docker Runtime
 
-The deploy workflow automatically:
-1. Builds the image and pushes to `ghcr.io/<owner>/<repo>:<tag>`
-2. SSHes into the VM and runs:
-
 ```bash
-docker pull ghcr.io/<owner>/<repo>:v1.0.0
-docker stop mcp-yt-thumbnailer
-docker rm mcp-yt-thumbnailer
 docker run -d \
   --name mcp-yt-thumbnailer \
   --restart unless-stopped \
+  -p 3000:3000 \
   -e GOOGLE_CLIENT_ID=... \
   -e GOOGLE_CLIENT_SECRET=... \
-  -e GOOGLE_REDIRECT_URI=... \
+  -e SERVER_BASE_URL=https://your-server.example.com \
+  -e TOKENS_DIR=/data/tokens \
+  -e DEDUPE_STORE_PATH=/data/dedupe-store.json \
   -v /srv/mcp-yt-thumbnailer/data:/data \
   ghcr.io/<owner>/<repo>:v1.0.0
 ```
 
-**Note:** Before first deploy, run the auth flow manually on the VM to populate `/srv/mcp-yt-thumbnailer/data/.tokens.json`.
+**Note:** Each tenant authenticates by visiting `https://your-server.example.com/auth/start` and saving the displayed Tenant ID.
 
 ### Building the image locally
 
 ```bash
 docker build -t mcp-yt-thumbnailer .
 docker run --rm \
+  -p 3000:3000 \
   -e GOOGLE_CLIENT_ID=... \
   -e GOOGLE_CLIENT_SECRET=... \
   -v $(pwd)/data:/data \
@@ -230,14 +258,14 @@ docker run --rm \
 
 ---
 
-## 8. Storage
+## 9. Storage
 
-| File                           | Purpose                                     |
-|--------------------------------|---------------------------------------------|
-| `.tokens.json` (or `TOKENS_PATH`) | Google OAuth2 access + refresh tokens   |
-| `dedupe-store.json` (or `DEDUPE_STORE_PATH`) | SHA-256 hash per video ID — prevents re-uploading identical thumbnails |
+| Path                                    | Purpose                                                        |
+|-----------------------------------------|----------------------------------------------------------------|
+| `{TOKENS_DIR}/{tenantId}.tokens.json`   | Per-tenant Google OAuth2 access + refresh tokens              |
+| `{DEDUPE_STORE_PATH}`                   | SHA-256 hash per `{tenantId}:{videoId}` — prevents re-uploading identical thumbnails |
 
-Both files are created automatically on first use and must be persisted between container restarts (mount as a Docker volume).
+Both are created automatically and must be persisted between container restarts (mount as a Docker volume).
 
 ---
 
@@ -245,21 +273,25 @@ Both files are created automatically on first use and must be persisted between 
 
 ```
 src/
-  index.ts          — MCP server entry point
+  index.ts              — MCP server + Express server entry point
   mcp/
-    tool.ts         — set_youtube_thumbnail tool implementation
+    tool.ts             — set_youtube_thumbnail tool implementation
+  server/
+    express.ts          — Express app factory + OAuth server startup
+    routes/
+      auth.ts           — /auth/start, /auth/callback, /auth/status routes
   youtube/
-    auth.ts         — Google OAuth2 authentication
-    thumbnails.ts   — YouTube thumbnails.set API call
+    auth.ts             — Multi-tenant Google OAuth2 authentication
+    thumbnails.ts       — YouTube thumbnails.set API call
   image/
-    processor.ts    — Image fetch, resize, JPEG conversion
+    processor.ts        — Image fetch, resize, JPEG conversion
   dedupe/
-    store.ts        — SHA-256 hashing + JSON dedup store
+    store.ts            — SHA-256 hashing + JSON dedup store (keyed by tenantId:videoId)
   utils/
-    ssrf.ts         — SSRF protection for URL downloads
-    logger.ts       — Structured JSON logger
+    ssrf.ts             — SSRF protection for URL downloads
+    logger.ts           — Structured JSON logger
 tests/
-  image.test.ts     — Image processing tests
-  dedupe.test.ts    — Hash + dedup store tests
-  tool.test.ts      — MCP tool tests (mocked YouTube API)
+  image.test.ts         — Image processing tests
+  dedupe.test.ts        — Hash + dedup store tests
+  tool.test.ts          — MCP tool tests (mocked YouTube API)
 ```

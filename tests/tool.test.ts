@@ -22,6 +22,8 @@ import { getAuthClient } from "../src/youtube/auth";
 const mockUpload = uploadThumbnail as jest.MockedFunction<typeof uploadThumbnail>;
 const mockAuth = getAuthClient as jest.MockedFunction<typeof getAuthClient>;
 
+const TEST_TENANT = "tenant-test-001";
+
 async function writeTestImage(p: string): Promise<void> {
   const buf = await sharp({
     create: { width: 640, height: 480, channels: 3, background: { r: 255, g: 0, b: 0 } },
@@ -52,13 +54,14 @@ describe("setYoutubeThumbnail (mocked YouTube API)", () => {
   });
 
   it("returns error when neither imagePath nor imageUrl is provided", async () => {
-    const result = await setYoutubeThumbnail({ videoId: "abc123" });
+    const result = await setYoutubeThumbnail({ tenantId: TEST_TENANT, videoId: "abc123" });
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/imagePath or imageUrl/);
   });
 
   it("returns error when both imagePath and imageUrl are provided", async () => {
     const result = await setYoutubeThumbnail({
+      tenantId: TEST_TENANT,
       videoId: "abc123",
       imagePath: testImagePath,
       imageUrl: "https://example.com/img.jpg",
@@ -69,7 +72,17 @@ describe("setYoutubeThumbnail (mocked YouTube API)", () => {
 
   it("returns error for empty videoId", async () => {
     const result = await setYoutubeThumbnail({
+      tenantId: TEST_TENANT,
       videoId: "",
+      imagePath: testImagePath,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("returns error for empty tenantId", async () => {
+    const result = await setYoutubeThumbnail({
+      tenantId: "",
+      videoId: "abc123",
       imagePath: testImagePath,
     });
     expect(result.success).toBe(false);
@@ -77,19 +90,22 @@ describe("setYoutubeThumbnail (mocked YouTube API)", () => {
 
   it("uploads thumbnail from local file and returns success", async () => {
     const result = await setYoutubeThumbnail({
+      tenantId: TEST_TENANT,
       videoId: "vid_upload_test",
       imagePath: testImagePath,
     });
     expect(result.success).toBe(true);
     expect(result.message).toBe("Thumbnail uploaded successfully");
     expect(mockUpload).toHaveBeenCalledTimes(1);
+    expect(mockAuth).toHaveBeenCalledWith(TEST_TENANT);
   });
 
   it("skips upload when same thumbnail is sent twice (dedupe)", async () => {
-    await setYoutubeThumbnail({ videoId: "vid_dedup", imagePath: testImagePath });
+    await setYoutubeThumbnail({ tenantId: TEST_TENANT, videoId: "vid_dedup", imagePath: testImagePath });
     mockUpload.mockClear();
 
     const result = await setYoutubeThumbnail({
+      tenantId: TEST_TENANT,
       videoId: "vid_dedup",
       imagePath: testImagePath,
     });
@@ -98,8 +114,22 @@ describe("setYoutubeThumbnail (mocked YouTube API)", () => {
     expect(mockUpload).not.toHaveBeenCalled();
   });
 
+  it("does not deduplicate across different tenants for the same video", async () => {
+    await setYoutubeThumbnail({ tenantId: "tenant-a", videoId: "vid_cross_tenant", imagePath: testImagePath });
+    mockUpload.mockClear();
+
+    const result = await setYoutubeThumbnail({
+      tenantId: "tenant-b",
+      videoId: "vid_cross_tenant",
+      imagePath: testImagePath,
+    });
+    expect(result.success).toBe(true);
+    expect(result.message).toBe("Thumbnail uploaded successfully");
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+  });
+
   it("re-uploads when image content changes", async () => {
-    await setYoutubeThumbnail({ videoId: "vid_change", imagePath: testImagePath });
+    await setYoutubeThumbnail({ tenantId: TEST_TENANT, videoId: "vid_change", imagePath: testImagePath });
 
     // Write a different image
     const buf2 = await sharp({
@@ -111,6 +141,7 @@ describe("setYoutubeThumbnail (mocked YouTube API)", () => {
     mockUpload.mockClear();
 
     const result = await setYoutubeThumbnail({
+      tenantId: TEST_TENANT,
       videoId: "vid_change",
       imagePath: testImagePath,
     });
@@ -132,7 +163,7 @@ describe("setYoutubeThumbnail (mocked YouTube API)", () => {
       return origWriteFile(p as string, ...args);
     });
 
-    await setYoutubeThumbnail({ videoId: "vid_fail", imagePath: testImagePath });
+    await setYoutubeThumbnail({ tenantId: TEST_TENANT, videoId: "vid_fail", imagePath: testImagePath });
 
     jest.restoreAllMocks();
 

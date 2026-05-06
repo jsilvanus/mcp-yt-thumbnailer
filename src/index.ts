@@ -1,14 +1,21 @@
 /**
  * MCP Server entry point.
  * Registers the set_youtube_thumbnail tool and starts the server.
+ * Also starts the Express OAuth2 redirect server for multi-tenant auth.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { setYoutubeThumbnail } from "./mcp/tool.js";
+import { startExpressServer } from "./server/express.js";
 import { logger } from "./utils/logger.js";
 
+const OAUTH_PORT = parseInt(process.env.PORT ?? "3000", 10);
+
 async function main() {
+  // Start the OAuth2 redirect server
+  startExpressServer(OAUTH_PORT);
+
   const server = new McpServer({
     name: "mcp-yt-thumbnailer",
     version: "1.0.0",
@@ -18,6 +25,11 @@ async function main() {
     "set_youtube_thumbnail",
     "Set a YouTube video thumbnail from a local file or image URL",
     {
+      tenantId: z
+        .string()
+        .describe(
+          "Tenant ID obtained after completing the OAuth2 flow at /auth/start"
+        ),
       videoId: z.string().describe("The YouTube video ID"),
       imagePath: z
         .string()

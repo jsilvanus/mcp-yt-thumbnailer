@@ -7,8 +7,6 @@ import path from "path";
 import crypto from "crypto";
 import { logger } from "../utils/logger.js";
 
-const DEFAULT_STORE_PATH = process.env.DEDUPE_STORE_PATH ?? "dedupe-store.json";
-
 interface DedupeEntry {
   hash: string;
   updatedAt: string;
@@ -41,31 +39,39 @@ async function writeStore(storePath: string, store: DedupeStore): Promise<void> 
 /**
  * Check dedup state and optionally update the store.
  *
+ * The store key is scoped per tenant: `{tenantId}:{videoId}`.
+ *
  * @returns true  → upload should be skipped (identical hash already stored)
  *          false → upload should proceed (new or changed hash)
  */
 export async function checkAndUpdateDedupe(
   videoId: string,
   hash: string,
-  storePath: string = DEFAULT_STORE_PATH
+  storePath?: string,
+  tenantId?: string
 ): Promise<boolean> {
-  const store = await readStore(storePath);
-  const existing = store[videoId];
+  const resolvedPath = storePath ?? resolveStorePath();
+  const store = await readStore(resolvedPath);
+  const key = tenantId ? `${tenantId}:${videoId}` : videoId;
+  const existing = store[key];
 
   if (existing && existing.hash === hash) {
-    logger.info("Dedupe: thumbnail unchanged, skipping upload", { videoId });
+    logger.info("Dedupe: thumbnail unchanged, skipping upload", { videoId, tenantId });
     return true; // skip
   }
 
-  store[videoId] = { hash, updatedAt: new Date().toISOString() };
-  await writeStore(storePath, store);
-  logger.info("Dedupe: hash updated", { videoId, hash: hash.slice(0, 12) });
+  store[key] = { hash, updatedAt: new Date().toISOString() };
+  await writeStore(resolvedPath, store);
+  logger.info("Dedupe: hash updated", { videoId, tenantId, hash: hash.slice(0, 12) });
   return false; // proceed
 }
 
 /**
  * Resolve the store file path from an optional override or env var.
+ * Reads the environment variable at call time so that tests can override it
+ * in beforeEach without being affected by the module-load-time snapshot.
  */
 export function resolveStorePath(override?: string): string {
-  return override ?? path.resolve(DEFAULT_STORE_PATH);
+  const envPath = process.env.DEDUPE_STORE_PATH ?? "dedupe-store.json";
+  return override ?? path.resolve(envPath);
 }
