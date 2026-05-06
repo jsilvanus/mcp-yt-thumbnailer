@@ -27,15 +27,28 @@ async function main() {
     "Start the YouTube OAuth2 authentication flow. Returns an authorization URL to open in a browser and a tenantId to use in subsequent tool calls.",
     {},
     async () => {
-      const result = await startYoutubeAuth();
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      try {
+        const result = await startYoutubeAuth();
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ success: true, ...result }, null, 2),
+            },
+          ],
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error("start_youtube_auth failed", { error: message });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ success: false, message }, null, 2),
+            },
+          ],
+        };
+      }
     }
   );
 
@@ -54,7 +67,7 @@ async function main() {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify(result, null, 2),
+              text: JSON.stringify({ success: true, ...result }, null, 2),
             },
           ],
         };
