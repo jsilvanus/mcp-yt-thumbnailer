@@ -17,7 +17,6 @@ jest.mock("googleapis", () => {
     setCredentials: jest.fn(),
     credentials: {},
   }));
-
   return {
     google: {
       auth: { OAuth2 },

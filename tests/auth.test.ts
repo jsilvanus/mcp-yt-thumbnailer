@@ -4,6 +4,7 @@
 import request from "supertest";
 import { createExpressApp } from "../src/server/express";
 import { clearPendingTenants, addPendingTenant } from "../src/youtube/pendingAuth";
+import { UUID_V4_RE } from "./testUtils";
 
 // Mock the youtube/auth module
 jest.mock("../src/youtube/auth", () => ({
@@ -13,8 +14,6 @@ jest.mock("../src/youtube/auth", () => ({
   exchangeCodeForTokens: jest.fn().mockResolvedValue(undefined),
   hasTokens: jest.fn().mockResolvedValue(false),
   validateTenantId: jest.fn((id: string) => {
-    const UUID_V4_RE =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (!UUID_V4_RE.test(id)) {
       throw new Error("Invalid tenantId: must be a UUID v4 string.");
     }
@@ -49,9 +48,7 @@ describe("GET /auth/start", () => {
     await request(app).get("/auth/start");
     expect(mockGenerateAuthUrl).toHaveBeenCalledTimes(1);
     const calledWith = mockGenerateAuthUrl.mock.calls[0][0];
-    expect(calledWith).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-    );
+    expect(calledWith).toMatch(UUID_V4_RE);
   });
 });
 
@@ -127,16 +124,15 @@ describe("GET /auth/callback", () => {
     expect(res.text).toMatch(/Authentication failed/);
   });
 
-  it("escapes special HTML characters in tenantId in response", async () => {
-    // We use a normal UUID so validation passes, XSS test via mocking the escapeHtml path
-    // is confirmed by the function itself; this test verifies the tenantId appears in the page
+  it("includes the tenantId verbatim in the success page", async () => {
+    // The route uses escapeHtml on the tenantId before embedding it in HTML.
+    // UUIDs contain no HTML-special characters, so the value appears as-is.
     addPendingTenant(VALID_UUID);
     const app = createExpressApp();
     const res = await request(app).get(
       `/auth/callback?code=code&state=${VALID_UUID}`
     );
     expect(res.status).toBe(200);
-    // The tenantId must appear as plain text (not HTML-entity-encoded for normal UUIDs)
     expect(res.text).toContain(VALID_UUID);
   });
 });
