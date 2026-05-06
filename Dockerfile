@@ -47,10 +47,10 @@ ENV NODE_ENV=production
 # Values are injected at build time from GitHub Actions.
 LABEL org.opencontainers.image.title="mcp-yt-thumbnailer" \
       org.opencontainers.image.description="MCP server for setting YouTube video thumbnails" \
-      org.opencontainers.image.created="$BUILD_DATE" \
-      org.opencontainers.image.revision="$VCS_REF" \
-      org.opencontainers.image.version="$VERSION" \
-      org.opencontainers.image.source="$IMAGE_SOURCE" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="${IMAGE_SOURCE}" \
       org.opencontainers.image.licenses="MIT"
 
 # MCP servers communicate via stdio
