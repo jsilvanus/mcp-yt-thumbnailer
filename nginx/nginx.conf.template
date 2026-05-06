@@ -1,0 +1,112 @@
+# nginx reverse-proxy configuration for mcp-yt-thumbnailer
+# ─────────────────────────────────────────────────────────────────────────────
+# This file is a template. At deployment time the GitHub Actions workflow runs
+# envsubst to expand the following placeholders and writes the result to
+# /etc/nginx/sites-available/mcp-yt-thumbnailer on the target server.
+#
+#   ${DOMAIN}       – public hostname, e.g. mcp.example.com  (secrets.DOMAIN)
+#   ${APP_PORT}     – host port the container binds to         (vars.APP_PORT; workflow defaults to 3000 if unset)
+#   ${ENVIRONMENT}  – deployment environment label             (workflow_dispatch input)
+#
+# TLS/SSL is managed by Let's Encrypt (certbot) in webroot mode.
+# The workflow does NOT run certbot – you must do that once manually on a fresh
+# server, then subsequent renewals are handled by certbot's systemd timer/cron.
+#
+#   sudo certbot certonly --webroot \
+#        --webroot-path /var/www/certbot \
+#        -d ${DOMAIN} \
+#        --email <admin-email> --agree-tos --non-interactive
+#
+# IMPORTANT: certbot should be run in --webroot (or --standalone) mode, NOT
+# --nginx mode, so that it does not modify this file. The ssl_certificate paths
+# below already point to the standard certbot location; the first deployment
+# will reload nginx after writing the config.  If the certs do not yet exist
+# nginx will fail the config test – obtain the certs before the first deploy or
+# use the bootstrap procedure in README.md.
+# ─────────────────────────────────────────────────────────────────────────────
+# Environment: ${ENVIRONMENT}
+
+# ── HTTP ─────────────────────────────────────────────────────────────────────
+server {
+    listen 80;
+    listen [::]:80;
+
+    server_name ${DOMAIN};
+
+    # Webroot ACME challenge directory.
+    # certbot --webroot writes validation tokens here; nginx serves them.
+    # Never remove this block – it is required for certificate renewal.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    # Redirect all other HTTP traffic to HTTPS.
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ── HTTPS ────────────────────────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+
+    server_name ${DOMAIN};
+
+    # TLS certificates – issued and renewed by certbot.
+    # Do not edit these paths; they follow the standard certbot layout.
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    include             /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+    # ── Proxy: MCP HTTP Streaming endpoint ───────────────────────────────────
+    # Handles both:
+    #   POST /mcp  – JSON-RPC request/response (may return SSE stream)
+    #   GET  /mcp  – Long-lived SSE subscription for server-initiated events
+    #   DELETE /mcp – Session teardown
+    #
+    # IMPORTANT: proxy_buffering MUST be off for SSE to work correctly.
+    # X-Accel-Buffering overrides any parent http{} context setting.
+    location /mcp {
+        proxy_pass         http://127.0.0.1:${APP_PORT}/mcp;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        # Clear the Connection header so hop-by-hop headers (e.g. keep-alive)
+        # are not forwarded to the upstream; this keeps persistent TCP connections
+        # open between nginx and the upstream for long-lived SSE streams.
+        proxy_set_header   Connection        '';
+
+        # Disable buffering so SSE events are flushed immediately.
+        proxy_buffering    off;
+        proxy_cache        off;
+        add_header         X-Accel-Buffering no;
+
+        # Allow long-lived SSE connections (5 minutes idle timeout).
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    # ── Proxy: OAuth2 redirect server ────────────────────────────────────────
+    # The mcp-yt-thumbnailer container exposes the Express OAuth2 callback
+    # server on localhost:${APP_PORT}.  Only the /auth/ path is proxied; all
+    # other paths return 404 to avoid unintended exposure.
+    location /auth/ {
+        proxy_pass         http://127.0.0.1:${APP_PORT}/auth/;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+    }
+
+    # Deny everything else
+    location / {
+        return 404;
+    }
+}
