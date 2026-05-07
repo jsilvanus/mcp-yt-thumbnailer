@@ -97,6 +97,7 @@ jobs:
 
             IMAGE="${{ needs.build-and-push.outputs.image }}"
             APP_PORT="${{ vars.APP_PORT || '3000' }}"
+            PORT="${{ vars.PORT || '3000' }}"
             DEPLOY_PATH="${{ vars.DEPLOY_PATH || '/srv/mcp-yt-thumbnailer' }}"
 
             mkdir -p "$DEPLOY_PATH/data/tokens"
@@ -109,10 +110,10 @@ jobs:
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
             SERVER_BASE_URL=${{ secrets.SERVER_BASE_URL }}
-            MCP_TRANSPORT=http
-            PORT=3000
-            TOKENS_DIR=/data/tokens
-            DEDUPE_STORE_PATH=/data/dedupe-store.json
+            MCP_TRANSPORT=${{ vars.MCP_TRANSPORT || 'http' }}
+            PORT=${{ vars.PORT || '3000' }}
+            TOKENS_DIR=${{ vars.TOKENS_DIR || '/data/tokens' }}
+            DEDUPE_STORE_PATH=${{ vars.DEDUPE_STORE_PATH || '/data/dedupe-store.json' }}
             ENVEOF
             chmod 600 "$DEPLOY_PATH/.env"
 
@@ -122,7 +123,7 @@ jobs:
                 image: $IMAGE
                 restart: unless-stopped
                 ports:
-                  - "127.0.0.1:${APP_PORT}:3000"
+                  - "127.0.0.1:${APP_PORT}:${PORT}"
                 env_file:
                   - .env
                 volumes:
