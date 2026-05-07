@@ -5,12 +5,8 @@ on:
     inputs:
       environment:
         description: "Deployment environment"
-        required: false
-        default: "production"
-        type: choice
-        options:
-          - production
-          - staging
+        required: true
+        type: environment
 
 jobs:
   build-and-push:
