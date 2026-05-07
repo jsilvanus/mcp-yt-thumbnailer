@@ -1,45 +1,32 @@
-name: Deploy
+name: Deploy (all production environments)
 
-# Triggers:
-#   Manual  – workflow_dispatch with a GitHub-managed environment picker.
-#   Tag     – push a tag of the form v<semver>-<environment-name>, e.g.
-#             v1.2.3-production-eu  →  deploys to the "production-eu" environment.
+# Triggered by a tag of the form v<semver>-all, e.g. v1.2.3-all.
+# Discovers every GitHub environment whose name contains "production",
+# builds the image once, then fans out a parallel deploy job per environment.
+# Each environment's own secrets (SSH_HOST, etc.) and protection rules apply.
 #
-# Both paths converge in the deploy job via the resolve-env job output.
+# Requires: ENVIRONMENTS_TOKEN secret — a fine-grained PAT with
+#           Repository > Environments > Read permission.
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: "Deployment environment"
-        required: true
-        type: environment
   push:
     tags:
-      - 'v[0-9]*.[0-9]*.[0-9]*-*'
-      - '!v[0-9]*.[0-9]*.[0-9]*-all'
+      - 'v[0-9]*.[0-9]*.[0-9]*-all'
 
 jobs:
-  # Runs immediately (no deps). Outputs the target environment name regardless
-  # of how the workflow was triggered, so the deploy job stays trigger-agnostic.
-  resolve-env:
+  discover:
     runs-on: ubuntu-latest
     outputs:
-      environment: ${{ steps.env.outputs.name }}
+      environments: ${{ steps.list.outputs.environments }}
     steps:
-      - name: Resolve environment name
-        id: env
+      - name: List production environments
+        id: list
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "name=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
-          else
-            # Tag format: v1.2.3-<environment-name>
-            # Strip the vX.Y.Z- prefix; everything after is the environment name.
-            TAG="${{ github.ref_name }}"
-            ENV=$(echo "$TAG" | sed -E 's/^v[0-9]+\.[0-9]+\.[0-9]+-//')
-            echo "name=${ENV}" >> "$GITHUB_OUTPUT"
-          fi
+          ENVS=$(gh api "repos/${{ github.repository }}/environments" \
+            --jq '[.environments[].name | select(contains("production"))]')
+          echo "environments=${ENVS}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.ENVIRONMENTS_TOKEN }}
 
-  # Runs immediately in parallel with resolve-env.
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
@@ -65,17 +52,11 @@ jobs:
         run: |
           SHORT_SHA="${GITHUB_SHA::8}"
           REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          SEMVER=$(echo "${{ github.ref_name }}" | grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+')
           echo "image=ghcr.io/${REPO_LC}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "repo=ghcr.io/${REPO_LC}" >> "$GITHUB_OUTPUT"
+          echo "semver_tag=ghcr.io/${REPO_LC}:${SEMVER}" >> "$GITHUB_OUTPUT"
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-          # For tag-triggered runs extract the semver portion (e.g. v1.2.3) and
-          # push it as an additional image tag. Empty for dispatch runs.
-          SEMVER_TAG=""
-          if [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-. ]]; then
-            SEMVER=$(echo "${{ github.ref_name }}" | grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+')
-            SEMVER_TAG="ghcr.io/${REPO_LC}:${SEMVER}"
-          fi
-          echo "semver_tag=${SEMVER_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -92,12 +73,16 @@ jobs:
             VERSION=${{ github.ref_name }}
             IMAGE_SOURCE=https://github.com/${{ github.repository }}
 
-  # Waits for both jobs above. The environment is resolved dynamically so
-  # GitHub applies the correct environment secrets and protection rules.
+  # One leg per discovered environment, all running in parallel.
+  # fail-fast: false ensures a failure in one environment does not cancel the others.
   deploy:
     runs-on: ubuntu-latest
-    needs: [resolve-env, build-and-push]
-    environment: ${{ needs.resolve-env.outputs.environment }}
+    needs: [discover, build-and-push]
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJson(needs.discover.outputs.environments) }}
+    environment: ${{ matrix.environment }}
     permissions: {}
 
     steps:
@@ -114,19 +99,12 @@ jobs:
             APP_PORT="${{ vars.APP_PORT || '3000' }}"
             DEPLOY_PATH="${{ vars.DEPLOY_PATH || '/srv/mcp-yt-thumbnailer' }}"
 
-            # Ensure deploy directory and data subdirs exist
             mkdir -p "$DEPLOY_PATH/data/tokens"
             chmod 700 "$DEPLOY_PATH/data"
 
-            # Log in to GHCR so docker can pull the image.
-            # GHCR_TOKEN must be a PAT with read:packages scope.
             echo "${{ secrets.GHCR_TOKEN }}" | \
               docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-            # Write .env
-            # GHA resolves ${{ secrets.* }} before this script runs on the VM.
-            # A single-quoted heredoc delimiter stops bash from re-expanding
-            # any $ characters that appear in the resolved secret values.
             cat > "$DEPLOY_PATH/.env" << 'ENVEOF'
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
@@ -138,8 +116,6 @@ jobs:
             ENVEOF
             chmod 600 "$DEPLOY_PATH/.env"
 
-            # Write docker-compose.yml
-            # Unquoted heredoc delimiter so $IMAGE and $APP_PORT expand.
             cat > "$DEPLOY_PATH/docker-compose.yml" << COMPOSEEOF
             services:
               mcp-yt-thumbnailer:
@@ -157,4 +133,4 @@ jobs:
             docker compose pull
             docker compose up -d
 
-            echo "Deploy complete – $IMAGE (env: ${{ needs.resolve-env.outputs.environment }})"
+            echo "Deploy complete – $IMAGE → ${{ matrix.environment }}"

@@ -67,6 +67,7 @@
         "functions": 50,
         "lines": 50
       }
-    }
+    },
+    "forceExit": true
   }
 }
