@@ -1,5 +1,11 @@
 name: Deploy
 
+# Triggers:
+#   Manual  – workflow_dispatch with a GitHub-managed environment picker.
+#   Tag     – push a tag of the form v<semver>-<environment-name>, e.g.
+#             v1.2.3-production-eu  →  deploys to the "production-eu" environment.
+#
+# Both paths converge in the deploy job via the resolve-env job output.
 on:
   workflow_dispatch:
     inputs:
@@ -7,8 +13,32 @@ on:
         description: "Deployment environment"
         required: true
         type: environment
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*-*'
 
 jobs:
+  # Runs immediately (no deps). Outputs the target environment name regardless
+  # of how the workflow was triggered, so the deploy job stays trigger-agnostic.
+  resolve-env:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.name }}
+    steps:
+      - name: Resolve environment name
+        id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "name=${{ inputs.environment }}" >> "$GITHUB_OUTPUT"
+          else
+            # Tag format: v1.2.3-<environment-name>
+            # Strip the vX.Y.Z- prefix; everything after is the environment name.
+            TAG="${{ github.ref_name }}"
+            ENV=$(echo "$TAG" | sed -E 's/^v[0-9]+\.[0-9]+\.[0-9]+-//')
+            echo "name=${ENV}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Runs immediately in parallel with resolve-env.
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
@@ -37,6 +67,14 @@ jobs:
           echo "image=ghcr.io/${REPO_LC}:sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           echo "repo=ghcr.io/${REPO_LC}" >> "$GITHUB_OUTPUT"
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          # For tag-triggered runs extract the semver portion (e.g. v1.2.3) and
+          # push it as an additional image tag. Empty for dispatch runs.
+          SEMVER_TAG=""
+          if [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-. ]]; then
+            SEMVER=$(echo "${{ github.ref_name }}" | grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+')
+            SEMVER_TAG="ghcr.io/${REPO_LC}:${SEMVER}"
+          fi
+          echo "semver_tag=${SEMVER_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -46,16 +84,19 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.image }}
             ${{ steps.meta.outputs.repo }}:latest
+            ${{ steps.meta.outputs.semver_tag }}
           build-args: |
             BUILD_DATE=${{ steps.meta.outputs.build_date }}
             VCS_REF=${{ github.sha }}
-            VERSION=sha-${{ github.sha }}
+            VERSION=${{ github.ref_name }}
             IMAGE_SOURCE=https://github.com/${{ github.repository }}
 
+  # Waits for both jobs above. The environment is resolved dynamically so
+  # GitHub applies the correct environment secrets and protection rules.
   deploy:
     runs-on: ubuntu-latest
-    needs: build-and-push
-    environment: ${{ inputs.environment || 'production' }}
+    needs: [resolve-env, build-and-push]
+    environment: ${{ needs.resolve-env.outputs.environment }}
     permissions: {}
 
     steps:
@@ -115,4 +156,4 @@ jobs:
             docker compose pull
             docker compose up -d
 
-            echo "Deploy complete – $IMAGE (env: ${{ inputs.environment || 'production' }})"
+            echo "Deploy complete – $IMAGE (env: ${{ needs.resolve-env.outputs.environment }})"
