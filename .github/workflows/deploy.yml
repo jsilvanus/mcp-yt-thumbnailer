@@ -98,66 +98,94 @@ jobs:
     runs-on: ubuntu-latest
     needs: [resolve-env, build-and-push]
     environment: ${{ needs.resolve-env.outputs.environment }}
-    permissions: {}
+    permissions:
+      contents: read
+    env:
+      APP_PORT: ${{ vars.APP_PORT || '3000' }}
+      PORT: ${{ vars.PORT || '3000' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/srv/mcp-yt-thumbnailer' }}
+      MCP_TRANSPORT: ${{ vars.MCP_TRANSPORT || 'http' }}
+      TOKENS_DIR: ${{ vars.TOKENS_DIR || '/data/tokens' }}
+      DEDUPE_STORE_PATH: ${{ vars.DEDUPE_STORE_PATH || '/data/dedupe-store.json' }}
+      SSH_PORT: ${{ vars.SSH_PORT || secrets.SSH_PORT || '22' }}
+      GHCR_USERNAME: ${{ vars.GHCR_USERNAME || github.repository_owner }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare deployment bundle
+        run: |
+          set -euo pipefail
+
+          rm -rf "$GITHUB_WORKSPACE/.deploy-tmp"
+          mkdir -p "$GITHUB_WORKSPACE/.deploy-tmp"
+
+          cat > "$GITHUB_WORKSPACE/.deploy-tmp/app.env" << 'ENVEOF'
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          SERVER_BASE_URL=${{ secrets.SERVER_BASE_URL }}
+          MCP_TRANSPORT=${{ env.MCP_TRANSPORT }}
+          PORT=${{ env.PORT }}
+          TOKENS_DIR=${{ env.TOKENS_DIR }}
+          DEDUPE_STORE_PATH=${{ env.DEDUPE_STORE_PATH }}
+          ENVEOF
+
+          cp "$GITHUB_WORKSPACE/deploy/docker-compose.yml" \
+            "$GITHUB_WORKSPACE/.deploy-tmp/docker-compose.yml"
+          chmod 600 "$GITHUB_WORKSPACE/.deploy-tmp/app.env"
+
+      - name: Ensure deploy directory exists
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ env.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+
+            DEPLOY_PATH="${{ env.DEPLOY_PATH }}"
+            mkdir -p "$DEPLOY_PATH/data/tokens"
+            chmod 700 "$DEPLOY_PATH/data"
+
+      - name: Copy deployment bundle
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ env.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: .deploy-tmp/*
+          target: ${{ env.DEPLOY_PATH }}
+          strip_components: 1
+
       - name: Deploy to VM
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SSH_HOST }}
+          port: ${{ env.SSH_PORT }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             set -euo pipefail
 
             IMAGE="${{ needs.build-and-push.outputs.image }}"
-            APP_PORT="${{ vars.APP_PORT || '3000' }}"
-            # PORT is used both as a shell variable (for the compose port mapping below)
-            # and written into .env (so the container app reads it).
-            PORT="${{ vars.PORT || '3000' }}"
-            DEPLOY_PATH="${{ vars.DEPLOY_PATH || '/srv/mcp-yt-thumbnailer' }}"
-
-            # Ensure deploy directory and data subdirs exist
-            mkdir -p "$DEPLOY_PATH/data/tokens"
-            chmod 700 "$DEPLOY_PATH/data"
-
-            # Log in to GHCR so docker can pull the image.
-            # GHCR_TOKEN must be a PAT with read:packages scope.
-            echo "${{ secrets.GHCR_TOKEN }}" | \
-              docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-            # Write .env
-            # GHA resolves ${{ secrets.* }} before this script runs on the VM.
-            # A single-quoted heredoc delimiter stops bash from re-expanding
-            # any $ characters that appear in the resolved secret values.
-            cat > "$DEPLOY_PATH/.env" << 'ENVEOF'
-            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
-            SERVER_BASE_URL=${{ secrets.SERVER_BASE_URL }}
-            MCP_TRANSPORT=${{ vars.MCP_TRANSPORT || 'http' }}
-            PORT=${{ vars.PORT || '3000' }}
-            TOKENS_DIR=${{ vars.TOKENS_DIR || '/data/tokens' }}
-            DEDUPE_STORE_PATH=${{ vars.DEDUPE_STORE_PATH || '/data/dedupe-store.json' }}
-            ENVEOF
-            chmod 600 "$DEPLOY_PATH/.env"
-
-            # Write docker-compose.yml
-            # Unquoted heredoc delimiter so $IMAGE and $APP_PORT expand.
-            cat > "$DEPLOY_PATH/docker-compose.yml" << COMPOSEEOF
-            services:
-              mcp-yt-thumbnailer:
-                image: $IMAGE
-                restart: unless-stopped
-                ports:
-                  - "127.0.0.1:${APP_PORT}:${PORT}"
-                env_file:
-                  - .env
-                volumes:
-                  - ./data:/data
-            COMPOSEEOF
+            APP_PORT="${{ env.APP_PORT }}"
+            PORT="${{ env.PORT }}"
+            DEPLOY_PATH="${{ env.DEPLOY_PATH }}"
+            GHCR_USERNAME="${{ env.GHCR_USERNAME }}"
 
             cd "$DEPLOY_PATH"
+            install -m 600 app.env .env
+            rm -f app.env
+
+            echo "${{ secrets.GHCR_TOKEN }}" | \
+              docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
+            export IMAGE APP_PORT PORT
+            docker compose config >/dev/null
             docker compose pull
-            docker compose up -d
+            docker compose up -d --remove-orphans
 
             echo "Deploy complete – $IMAGE (env: ${{ needs.resolve-env.outputs.environment }})"

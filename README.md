@@ -212,9 +212,23 @@ git push origin v1.0.0
 | `SSH_HOST`            | VM hostname or IP                        |
 | `SSH_USER`            | SSH username                             |
 | `SSH_PRIVATE_KEY`     | Private key for SSH authentication       |
+| `GHCR_TOKEN`          | PAT with `read:packages` for the deploy host |
 | `GOOGLE_CLIENT_ID`    | Google OAuth2 client ID                  |
 | `GOOGLE_CLIENT_SECRET`| Google OAuth2 client secret              |
 | `SERVER_BASE_URL`     | Public base URL (e.g. `https://your-server.example.com`) |
+
+### Optional GitHub Variables
+
+| Variable              | Default                         | Description |
+|-----------------------|---------------------------------|-------------|
+| `APP_PORT`            | `3000`                          | Host port bound by Docker Compose |
+| `PORT`                | `3000`                          | Container port exposed by the app |
+| `DEPLOY_PATH`         | `/srv/mcp-yt-thumbnailer`       | Remote directory that receives the deploy bundle |
+| `MCP_TRANSPORT`       | `http`                          | Transport used in the deployed container |
+| `TOKENS_DIR`          | `/data/tokens`                  | Persistent token directory inside the container |
+| `DEDUPE_STORE_PATH`   | `/data/dedupe-store.json`       | Persistent dedupe store inside the container |
+| `SSH_PORT`            | `22`                            | SSH port for the deploy host |
+| `GHCR_USERNAME`       | repository owner                | Username paired with `GHCR_TOKEN` for `docker login` |
 
 ### VM Setup
 
@@ -225,6 +239,8 @@ curl -fsSL https://get.docker.com | sh
 # Create data directory for persistent volumes
 mkdir -p /srv/mcp-yt-thumbnailer/data/tokens
 ```
+
+The deploy workflows copy `deploy/docker-compose.yml` plus a generated app env file to the target host, then run `docker compose pull && docker compose up -d --remove-orphans`.
 
 ### Docker Runtime
 
