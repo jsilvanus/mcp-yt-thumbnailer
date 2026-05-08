@@ -1,0 +1,10 @@
+services:
+  mcp-yt-thumbnailer:
+    image: ${IMAGE}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT}:${PORT}"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
