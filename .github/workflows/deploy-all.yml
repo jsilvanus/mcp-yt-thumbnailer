@@ -108,7 +108,7 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/.deploy-tmp"
           mkdir -p "$GITHUB_WORKSPACE/.deploy-tmp"
 
-          cat > "$GITHUB_WORKSPACE/.deploy-tmp/app.env" << 'ENVEOF'
+          cat > "$GITHUB_WORKSPACE/.deploy-tmp/app.env" << ENVEOF
           GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
           SERVER_BASE_URL=${{ secrets.SERVER_BASE_URL }}
@@ -143,7 +143,7 @@ jobs:
           port: ${{ env.SSH_PORT }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: .deploy-tmp/*
+          source: ./.deploy-tmp/*
           target: ${{ env.DEPLOY_PATH }}
           strip_components: 1
 
