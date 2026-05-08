@@ -92,6 +92,8 @@ jobs:
       MCP_TRANSPORT: ${{ vars.MCP_TRANSPORT || 'http' }}
       TOKENS_DIR: ${{ vars.TOKENS_DIR || '/data/tokens' }}
       DEDUPE_STORE_PATH: ${{ vars.DEDUPE_STORE_PATH || '/data/dedupe-store.json' }}
+      # SSH_PORT should live in vars because it is non-sensitive, but keep a
+      # secret fallback so existing environments continue to work unchanged.
       SSH_PORT: ${{ vars.SSH_PORT || secrets.SSH_PORT || '22' }}
       GHCR_USERNAME: ${{ vars.GHCR_USERNAME || github.repository_owner }}
 
