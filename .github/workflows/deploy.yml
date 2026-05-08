@@ -186,6 +186,8 @@ jobs:
               docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
             export IMAGE APP_PORT PORT
+            # Validate the copied compose file before pulling; with set -e the
+            # workflow stops immediately if docker compose reports an error.
             docker compose config >/dev/null
             docker compose pull
             docker compose up -d --remove-orphans
