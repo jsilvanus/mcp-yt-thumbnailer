@@ -33,10 +33,11 @@ async function writeTestImage(p: string): Promise<void> {
 }
 
 describe("/upload endpoint (integration)", () => {
-  let app: any;
+  let app: ReturnType<typeof createExpressApp>;
   let tmpImage: string;
   let tenantId: string;
   let tokensPath: string;
+  let uploadedPath: string | undefined;
 
   beforeEach(async () => {
     app = createExpressApp();
@@ -52,12 +53,32 @@ describe("/upload endpoint (integration)", () => {
     await fs.promises.writeFile(tokensPath, JSON.stringify({ access_token: "x" }), "utf-8");
 
     process.env.DEDUPE_STORE_PATH = path.join(tmpDir, `test-dedupe-${Date.now()}.json`);
+    uploadedPath = undefined;
   });
 
   afterEach(async () => {
-    try { fs.unlinkSync(tmpImage); } catch { }
-    try { fs.unlinkSync(tokensPath); } catch { }
-    try { fs.unlinkSync(process.env.DEDUPE_STORE_PATH || ""); } catch { }
+    try {
+      fs.unlinkSync(tmpImage);
+    } catch (error) {
+      void error;
+    }
+    try {
+      fs.unlinkSync(tokensPath);
+    } catch (error) {
+      void error;
+    }
+    try {
+      fs.unlinkSync(process.env.DEDUPE_STORE_PATH || "");
+    } catch (error) {
+      void error;
+    }
+    if (uploadedPath) {
+      try {
+        fs.unlinkSync(uploadedPath);
+      } catch (error) {
+        void error;
+      }
+    }
     delete process.env.DEDUPE_STORE_PATH;
   });
 
@@ -73,6 +94,7 @@ describe("/upload endpoint (integration)", () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("success", true);
     expect(res.body).toHaveProperty("uploadPath");
+    uploadedPath = res.body.uploadPath as string;
     expect(res.body).toHaveProperty("result");
     expect(res.body.result).toHaveProperty("success", true);
     expect(mockUpload).toHaveBeenCalledTimes(1);
