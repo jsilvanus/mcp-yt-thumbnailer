@@ -132,6 +132,15 @@ async function main() {
     });
 
     const app = createExpressApp();
+    app.use("/mcp", (_req, res, next) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "content-type,authorization,mcp-session-id");
+      next();
+    });
+    app.options("/mcp", (_req, res) => {
+      res.status(204).end();
+    });
     // POST: JSON-RPC request (response may be synchronous or an SSE stream).
     // express.json() parses the request body for POST only.
     app.post("/mcp", express.json(), (req, res) => {

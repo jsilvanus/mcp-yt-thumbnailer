@@ -28,6 +28,36 @@ const mockHasTokens = hasTokens as jest.MockedFunction<typeof hasTokens>;
 
 const VALID_UUID = "12345678-1234-4234-a234-123456789abc";
 
+describe("Compatibility endpoints", () => {
+  afterEach(() => {
+    delete process.env.SERVER_BASE_URL;
+  });
+
+  it("returns service health at /healthz", async () => {
+    const app = createExpressApp();
+    const res = await request(app).get("/healthz");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, service: "mcp-yt-thumbnailer" });
+  });
+
+  it("returns MCP discovery metadata at /.well-known/mcp.json", async () => {
+    process.env.SERVER_BASE_URL = "https://mcp.example.com/";
+    const app = createExpressApp();
+    const res = await request(app).get("/.well-known/mcp.json");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      name: "mcp-yt-thumbnailer",
+      transport: "streamable-http",
+      endpoints: {
+        mcp: "https://mcp.example.com/mcp",
+        authStart: "https://mcp.example.com/auth/start",
+        authStatus: "https://mcp.example.com/auth/status",
+        health: "https://mcp.example.com/healthz",
+      },
+    });
+  });
+});
+
 describe("GET /auth/start", () => {
   beforeEach(() => {
     clearPendingTenants();

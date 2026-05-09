@@ -22,6 +22,54 @@ Alongside the MCP server, an **Express HTTP server** runs on a configurable port
 
 ---
 
+## ChatGPT Compatibility
+
+To use this MCP server from ChatGPT as a **remote MCP endpoint**, you need:
+
+1. A publicly reachable **HTTPS** URL (no self-signed certs)
+2. MCP server running in **Streamable HTTP** mode (`MCP_TRANSPORT=http`)
+3. Reverse proxy support for `POST/GET/DELETE /mcp` with SSE buffering disabled
+4. OAuth callback URL set in Google Cloud to `{SERVER_BASE_URL}/auth/callback`
+5. A way for operators to verify reachability (`/healthz`) and metadata (`/.well-known/mcp.json`)
+
+### Implementation Plan (ChatGPT Compatibility)
+
+This is the implementation sequence used to make compatibility robust in production:
+
+1. **Protocol and endpoint readiness**
+  - Keep MCP transport on `streamable-http`
+  - Ensure `/mcp` supports `POST`, `GET`, `DELETE`, and `OPTIONS`
+  - Add CORS/preflight headers for broader client compatibility
+
+2. **Discovery and diagnostics**
+  - Add `GET /.well-known/mcp.json` for machine-readable server metadata
+  - Add `GET /healthz` for deployment/liveness checks
+  - Expose both paths through nginx
+
+3. **Auth UX and tooling**
+  - Keep `start_youtube_auth` and `check_youtube_auth_status` as first-class MCP tools
+  - Document the tenant bootstrap flow for ChatGPT users
+  - Validate that callback pages and tool responses are user-friendly
+
+4. **Operational hardening**
+  - Add integration tests for remote MCP HTTP flow in containerized deploys
+  - Add structured request correlation IDs for MCP and OAuth requests
+  - Add rate limiting and abuse controls around `/mcp` when exposed publicly
+
+5. **Release readiness**
+  - Provide copy-paste ChatGPT onboarding instructions
+  - Add smoke-check script for `/healthz`, `/.well-known/mcp.json`, and `/mcp`
+  - Tag and deploy after verification in a staging domain
+
+### Implemented in this iteration
+
+- Added `GET /healthz`
+- Added `GET /.well-known/mcp.json`
+- Added `/mcp` preflight (`OPTIONS`) and compatibility response headers
+- Updated nginx template to proxy `/.well-known/mcp.json` and `/healthz`
+
+---
+
 ## 2. Setup
 
 ### Prerequisites
