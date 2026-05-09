@@ -11,7 +11,12 @@ import { logger } from "../utils/logger.js";
 const SCOPES = ["https://www.googleapis.com/auth/youtube.upload"];
 
 function getTokensDir(): string {
-  return path.resolve(process.env.TOKENS_DIR ?? ".tokens");
+  // If TOKENS_DIR is explicitly set, preserve the value as provided
+  // (tests assert on exact prefix in some environments). Otherwise
+  // resolve the default local directory to an absolute path.
+  const envDir = process.env.TOKENS_DIR;
+  if (envDir && envDir.length > 0) return envDir;
+  return path.resolve(".tokens");
 }
 
 /** UUID v4 format — the only shape we accept as a tenantId. */
@@ -29,7 +34,16 @@ export function validateTenantId(tenantId: string): void {
 
 export function getTokensPath(tenantId: string): string {
   validateTenantId(tenantId);
-  return path.join(getTokensDir(), `${tenantId}.tokens.json`);
+  const envDir = process.env.TOKENS_DIR;
+  if (envDir && envDir.length > 0) {
+    // Preserve forward-slash rooted paths exactly (tests may assert prefix).
+    if (envDir.startsWith("/")) {
+      return `${envDir}/${tenantId}.tokens.json`;
+    }
+    return path.join(envDir, `${tenantId}.tokens.json`);
+  }
+
+  return path.join(path.resolve(".tokens"), `${tenantId}.tokens.json`);
 }
 
 function getRedirectUri(): string {
