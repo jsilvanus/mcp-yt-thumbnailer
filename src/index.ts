@@ -163,21 +163,18 @@ async function main() {
           return;
         }
 
-        let newTransport: StreamableHTTPServerTransport | undefined;
         const server = createMcpServer();
 
-        newTransport = new StreamableHTTPServerTransport({
+        const newTransport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSessionId: string) => {
-            if (newTransport) {
-              sessionTransports.set(newSessionId, newTransport);
-              logger.info("MCP session initialized", { sessionId: newSessionId });
-            }
+            sessionTransports.set(newSessionId, newTransport);
+            logger.info("MCP session initialized", { sessionId: newSessionId });
           },
         });
 
         newTransport.onclose = () => {
-          if (newTransport?.sessionId) {
+          if (newTransport.sessionId) {
             sessionTransports.delete(newTransport.sessionId);
             logger.info("MCP session closed", { sessionId: newTransport.sessionId });
           }
