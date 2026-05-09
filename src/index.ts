@@ -66,7 +66,7 @@ function createMcpServer(): any {
         .string()
         .describe("The tenantId returned by start_youtube_auth"),
     },
-    async (args) => {
+    async (args: any) => {
       try {
         const result = await checkYoutubeAuthStatus(args.tenantId);
         return {
@@ -110,7 +110,7 @@ function createMcpServer(): any {
         .optional()
         .describe("URL of the image to use as thumbnail"),
     },
-    async (args) => {
+    async (args: any) => {
       const result = await setYoutubeThumbnail(args);
       return {
         content: [
