@@ -1,6 +1,6 @@
 {
   "name": "mcp-yt-thumbnailer",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "MCP server for setting YouTube video thumbnails",
   "main": "dist/index.js",
   "type": "module",
