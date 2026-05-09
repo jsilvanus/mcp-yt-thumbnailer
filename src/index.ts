@@ -22,7 +22,7 @@ import { logger } from "./utils/logger.js";
 const OAUTH_PORT = parseInt(process.env.PORT ?? "3000", 10);
 const MCP_TRANSPORT = process.env.MCP_TRANSPORT ?? "stdio";
 
-async function main() {
+function createMcpServer(): McpServer {
   const server = new McpServer({
     name: "mcp-yt-thumbnailer",
     version: "1.0.0",
@@ -123,15 +123,17 @@ async function main() {
     }
   );
 
+  return server;
+}
+
+async function main() {
   if (MCP_TRANSPORT === "http") {
     // HTTP Streaming transport – deployed behind nginx/HTTPS.
     // The /mcp (MCP) and /auth (OAuth2) endpoints share the same Express server
     // on OAUTH_PORT so a single port binding is needed in production.
-    const mcpTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-    });
-
     const app = createExpressApp();
+    const sessionTransports = new Map<string, StreamableHTTPServerTransport>();
+
     app.use("/mcp", (_req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
@@ -141,18 +143,112 @@ async function main() {
     app.options("/mcp", (_req, res) => {
       res.status(204).end();
     });
-    // POST: JSON-RPC request (response may be synchronous or an SSE stream).
-    // express.json() parses the request body for POST only.
-    app.post("/mcp", express.json(), (req, res) => {
-      mcpTransport.handleRequest(req, res, req.body);
+
+    app.post("/mcp", express.json(), async (req, res) => {
+      try {
+        const headerValue = req.headers["mcp-session-id"];
+        const sessionId = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+
+        if (sessionId) {
+          const existingTransport = sessionTransports.get(sessionId);
+          if (!existingTransport) {
+            res.status(404).json({
+              jsonrpc: "2.0",
+              error: { code: -32001, message: "Session not found" },
+              id: null,
+            });
+            return;
+          }
+          await existingTransport.handleRequest(req, res, req.body);
+          return;
+        }
+
+        let newTransport: StreamableHTTPServerTransport | undefined;
+        const server = createMcpServer();
+
+        newTransport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (newSessionId: string) => {
+            if (newTransport) {
+              sessionTransports.set(newSessionId, newTransport);
+              logger.info("MCP session initialized", { sessionId: newSessionId });
+            }
+          },
+        });
+
+        newTransport.onclose = () => {
+          if (newTransport?.sessionId) {
+            sessionTransports.delete(newTransport.sessionId);
+            logger.info("MCP session closed", { sessionId: newTransport.sessionId });
+          }
+        };
+
+        await server.connect(newTransport);
+        await newTransport.handleRequest(req, res, req.body);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error("MCP HTTP POST failed", { error: message });
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: "Internal server error" },
+            id: null,
+          });
+        }
+      }
     });
-    // GET: long-lived SSE subscription for server-initiated events.
-    app.get("/mcp", (req, res) => {
-      mcpTransport.handleRequest(req, res);
+
+    app.get("/mcp", async (req, res) => {
+      const headerValue = req.headers["mcp-session-id"];
+      const sessionId = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+
+      if (!sessionId) {
+        res.status(400).json({
+          jsonrpc: "2.0",
+          error: { code: -32600, message: "Missing mcp-session-id header" },
+          id: null,
+        });
+        return;
+      }
+
+      const transport = sessionTransports.get(sessionId);
+      if (!transport) {
+        res.status(404).json({
+          jsonrpc: "2.0",
+          error: { code: -32001, message: "Session not found" },
+          id: null,
+        });
+        return;
+      }
+
+      await transport.handleRequest(req, res);
     });
-    // DELETE: MCP session teardown – no body expected.
-    app.delete("/mcp", (req, res) => {
-      mcpTransport.handleRequest(req, res);
+
+    app.delete("/mcp", async (req, res) => {
+      const headerValue = req.headers["mcp-session-id"];
+      const sessionId = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+
+      if (!sessionId) {
+        res.status(400).json({
+          jsonrpc: "2.0",
+          error: { code: -32600, message: "Missing mcp-session-id header" },
+          id: null,
+        });
+        return;
+      }
+
+      const transport = sessionTransports.get(sessionId);
+      if (!transport) {
+        res.status(404).json({
+          jsonrpc: "2.0",
+          error: { code: -32001, message: "Session not found" },
+          id: null,
+        });
+        return;
+      }
+
+      await transport.handleRequest(req, res);
+      sessionTransports.delete(sessionId);
     });
 
     app.listen(OAUTH_PORT, () => {
@@ -162,12 +258,12 @@ async function main() {
       });
     });
 
-    await server.connect(mcpTransport);
     logger.info("MCP server started (http)");
   } else {
-    // Default: stdio transport for local Claude Desktop usage.
+    // Default: stdio transport for local usage.
     startExpressServer(OAUTH_PORT);
     const transport = new StdioServerTransport();
+    const server = createMcpServer();
     await server.connect(transport);
     logger.info("MCP server started (stdio)");
   }
