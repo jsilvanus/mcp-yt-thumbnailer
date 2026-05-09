@@ -135,7 +135,8 @@ jobs:
 
           cp "$GITHUB_WORKSPACE/deploy/docker-compose.yml" \
             "$GITHUB_WORKSPACE/.deploy-tmp/docker-compose.yml"
-          chmod 600 "$GITHUB_WORKSPACE/.deploy-tmp/app.env"
+          # Make readable so the scp-action's tar process can access it
+          chmod 644 "$GITHUB_WORKSPACE/.deploy-tmp/app.env"
 
       - name: Ensure deploy directory exists
         uses: appleboy/ssh-action@v1
