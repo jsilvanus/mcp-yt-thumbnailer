@@ -8,7 +8,6 @@
  *   http            – Streamable-HTTP transport at /mcp, behind nginx/HTTPS.
  *                     Both /mcp (MCP) and /auth (OAuth2) share the same port.
  */
-// @ts-nocheck
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -23,8 +22,8 @@ import { logger } from "./utils/logger.js";
 const OAUTH_PORT = parseInt(process.env.PORT ?? "3000", 10);
 const MCP_TRANSPORT = process.env.MCP_TRANSPORT ?? "stdio";
 
-function createMcpServer(): McpServer {
-  const server = new McpServer({
+function createMcpServer(): any {
+  const server: any = new McpServer({
     name: "mcp-yt-thumbnailer",
     version: "1.0.0",
   });
