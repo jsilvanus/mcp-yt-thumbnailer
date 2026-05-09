@@ -57,27 +57,13 @@ describe("/upload endpoint (integration)", () => {
   });
 
   afterEach(async () => {
-    try {
-      fs.unlinkSync(tmpImage);
-    } catch (error) {
-      void error;
-    }
-    try {
-      fs.unlinkSync(tokensPath);
-    } catch (error) {
-      void error;
-    }
-    try {
-      fs.unlinkSync(process.env.DEDUPE_STORE_PATH || "");
-    } catch (error) {
-      void error;
+    fs.rmSync(tmpImage, { force: true });
+    fs.rmSync(tokensPath, { force: true });
+    if (process.env.DEDUPE_STORE_PATH) {
+      fs.rmSync(process.env.DEDUPE_STORE_PATH, { force: true });
     }
     if (uploadedPath) {
-      try {
-        fs.unlinkSync(uploadedPath);
-      } catch (error) {
-        void error;
-      }
+      fs.rmSync(uploadedPath, { force: true });
     }
     delete process.env.DEDUPE_STORE_PATH;
   });
