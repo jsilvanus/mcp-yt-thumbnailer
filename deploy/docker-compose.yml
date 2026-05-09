@@ -2,9 +2,17 @@ services:
   mcp-yt-thumbnailer:
     image: ${IMAGE}
     restart: unless-stopped
+    # Optionally run the container as the host owner of ./data by setting
+    # HOST_UID and HOST_GID in your environment or .env file. Example:
+    #   HOST_UID=1001
+    #   HOST_GID=1001
+    # If not set, the container runs as the image default user.
+    user: "${HOST_UID:-}:${HOST_GID:-}"
     ports:
       - "127.0.0.1:${APP_PORT}:${PORT}"
     env_file:
       - .env
+    environment:
+      - TOKENS_DIR=/data/tokens
     volumes:
       - ./data:/data
