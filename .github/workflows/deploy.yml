@@ -187,6 +187,15 @@ jobs:
               docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
             export IMAGE APP_PORT PORT
+            # Determine the remote SSH user UID/GID and make them available to
+            # docker compose so the service can be started with the host user
+            # mapping. Append to the .env file so compose variable substitution
+            # picks them up.
+            HOST_UID=$(id -u)
+            HOST_GID=$(id -g)
+            echo "HOST_UID=$HOST_UID" >> .env
+            echo "HOST_GID=$HOST_GID" >> .env
+
             # Validate the copied compose file before pulling; with set -e the
             # workflow stops immediately if docker compose reports an error.
             docker compose config >/dev/null
