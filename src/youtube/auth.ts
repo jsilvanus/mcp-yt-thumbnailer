@@ -34,16 +34,13 @@ export function validateTenantId(tenantId: string): void {
 
 export function getTokensPath(tenantId: string): string {
   validateTenantId(tenantId);
-  const envDir = process.env.TOKENS_DIR;
-  if (envDir && envDir.length > 0) {
-    // Preserve forward-slash rooted paths exactly (tests may assert prefix).
-    if (envDir.startsWith("/")) {
-      return `${envDir}/${tenantId}.tokens.json`;
-    }
-    return path.join(envDir, `${tenantId}.tokens.json`);
+  const dir = getTokensDir();
+  // Preserve forward-slash rooted paths exactly (tests may assert prefix).
+  if (dir.startsWith("/")) {
+    return `${dir}/${tenantId}.tokens.json`;
   }
 
-  return path.join(path.resolve(".tokens"), `${tenantId}.tokens.json`);
+  return path.join(dir, `${tenantId}.tokens.json`);
 }
 
 function getRedirectUri(): string {
