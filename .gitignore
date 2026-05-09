@@ -8,3 +8,4 @@ dedupe-store.json
 *.lock
 coverage/
 *.log
+uploads/
